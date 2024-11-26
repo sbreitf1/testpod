@@ -10,7 +10,6 @@ import (
 )
 
 type Template struct {
-	Name          string
 	DefaultImage  string
 	DefaultShell  string
 	Pod           PodTemplate
@@ -29,7 +28,6 @@ type NetworkPolicyTemplate struct {
 
 func NewDefaultTemplate() Template {
 	return Template{
-		Name:         "default",
 		DefaultImage: "alpine",
 		DefaultShell: "/bin/sh",
 		Pod: PodTemplate{
