@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,10 +10,16 @@ import (
 )
 
 var (
+	flagImageOverride = flag.String("image", "", "set to override default image from template")
+	flagShellOverride = flag.String("shell", "", "set to override default shell from template")
+	flagDryRun        = flag.Bool("dry-run", false, "print manifest instead of applying it to kubernetes")
+
 	tempKubeconfigPath string
 )
 
 func main() {
+	flag.Parse()
+
 	tpl, err := ReadTemplate()
 	if err != nil {
 		fmt.Println("ERR: read template:", err)
@@ -54,9 +61,24 @@ func execTemplate(tpl Template) error {
 	}
 	podName := "testpod-" + hostname + "-" + time.Now().Format("20060102-150405")
 
+	if len(*flagImageOverride) > 0 {
+		tpl.DefaultImage = *flagImageOverride
+	}
+	if len(*flagShellOverride) > 0 {
+		tpl.DefaultShell = *flagShellOverride
+	}
+
 	manifestData, err := MakeManifestFromTemplate(podName, tpl)
 	if err != nil {
 		return fmt.Errorf("render manifest: %w", err)
+	}
+
+	if *flagDryRun {
+		fmt.Println("dry-run: print manifest instead of applying it")
+		fmt.Println("###############################")
+		fmt.Println(strings.TrimSpace(manifestData))
+		fmt.Println("###############################")
+		return nil
 	}
 
 	if err := kubectlApply(manifestData); err != nil {

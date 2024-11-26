@@ -55,7 +55,10 @@ func MakeManifestFromTemplate(name string, tpl Template) (string, error) {
 		return "", fmt.Errorf("name cannot be empty")
 	}
 
-	matchLabels := map[string]string{"app": "testpod-" + name}
+	matchLabels := map[string]string{
+		"app.kubernetes.io/name":     "go-testpod",
+		"app.kubernetes.io/instance": name,
+	}
 
 	var podManifest PodManifest
 	podManifest.APIVersion = "v1"
