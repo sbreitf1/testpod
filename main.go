@@ -10,11 +10,13 @@ import (
 )
 
 var (
-	flagImageOverride = flag.String("image", "", "set to override default image from template")
-	flagShellOverride = flag.String("shell", "", "set to override default shell from template")
-	flagEnterMine     = flag.Bool("enter-mine", false, "open another shell in existing testpod managed by you")
-	flagEnterAny      = flag.Bool("enter-any", false, "open another shell in existing testpod managed by anyone")
-	flagDryRun        = flag.Bool("dry-run", false, "print manifest instead of applying it to kubernetes")
+	flagImageOverride    = flag.String("image", "", "set to override default image from template")
+	flagShellOverride    = flag.String("shell", "", "set to override default shell from template")
+	flagList             = flag.Bool("list", false, "list all running testpods")
+	flagEnterMine        = flag.Bool("enter-mine", false, "open another shell in existing testpod managed by you")
+	flagEnterAny         = flag.Bool("enter-any", false, "open another shell in existing testpod managed by anyone")
+	flagDryRun           = flag.Bool("dry-run", false, "print manifest instead of applying it to kubernetes")
+	flagNoTempKubeConfig = flag.Bool("no-temp-kubeconfig", false, "do not use temporary copy of kubeconfig file")
 
 	tempKubeconfigPath string
 )
@@ -22,10 +24,27 @@ var (
 func main() {
 	flag.Parse()
 
+	if err := execAll(); err != nil {
+		fmt.Println("ERR:", err)
+		os.Exit(1)
+	}
+}
+
+func execAll() error {
+	if *flagList {
+		if *flagEnterMine || *flagEnterAny {
+			return fmt.Errorf("cannot set flag --list in conjunction with --enter-mine or --enter-any")
+		}
+
+		if err := kubectlListPods(map[string]string{"app.kubernetes.io/name": "go-testpod"}); err != nil {
+			return fmt.Errorf("list testpods: %w", err)
+		}
+		return nil
+	}
+
 	tpl, err := ReadTemplate()
 	if err != nil {
-		fmt.Println("ERR: read template:", err)
-		os.Exit(1)
+		return fmt.Errorf("read template: %w", err)
 	}
 	if len(*flagImageOverride) > 0 {
 		tpl.DefaultImage = *flagImageOverride
@@ -34,34 +53,33 @@ func main() {
 		tpl.DefaultShell = *flagShellOverride
 	}
 
-	if err := execTemplate(tpl); err != nil {
-		fmt.Println("ERR:", err)
-		os.Exit(1)
-	}
+	return execWithTemplate(tpl)
 }
 
-func execTemplate(tpl Template) error {
+func execWithTemplate(tpl Template) error {
 	realKubeconfigPath := os.Getenv("KUBECONFIG")
-	tmpFile, err := os.CreateTemp(os.TempDir(), "testpod-kubeconfig-*.yaml")
-	if err != nil {
-		return fmt.Errorf("create temp kubeconfig: %w", err)
-	}
-	tempKubeconfigPath = tmpFile.Name()
-	fmt.Println("clone kubeconfig", realKubeconfigPath, "to", tempKubeconfigPath)
-	data, err := os.ReadFile(realKubeconfigPath)
-	if err != nil {
-		return fmt.Errorf("read kubeconfig: %w", err)
-	}
-	if err := os.WriteFile(tempKubeconfigPath, data, os.ModePerm); err != nil {
-		return fmt.Errorf("write temp kubeconfig: %w", err)
-	}
-	defer func() {
-		if err := os.Remove(tempKubeconfigPath); err != nil {
-			fmt.Println("WARN: failed to delete temp kubeconfig file", tempKubeconfigPath)
-		} else {
-			fmt.Println("temp kubeconfig file", tempKubeconfigPath, "deleted")
+	if !*flagNoTempKubeConfig {
+		tmpFile, err := os.CreateTemp(os.TempDir(), "testpod-kubeconfig-*.yaml")
+		if err != nil {
+			return fmt.Errorf("create temp kubeconfig: %w", err)
 		}
-	}()
+		tempKubeconfigPath = tmpFile.Name()
+		fmt.Println("clone kubeconfig", realKubeconfigPath, "to", tempKubeconfigPath)
+		data, err := os.ReadFile(realKubeconfigPath)
+		if err != nil {
+			return fmt.Errorf("read kubeconfig: %w", err)
+		}
+		if err := os.WriteFile(tempKubeconfigPath, data, os.ModePerm); err != nil {
+			return fmt.Errorf("write temp kubeconfig: %w", err)
+		}
+		defer func() {
+			if err := os.Remove(tempKubeconfigPath); err != nil {
+				fmt.Println("WARN: failed to delete temp kubeconfig file", tempKubeconfigPath)
+			} else {
+				fmt.Println("temp kubeconfig file", tempKubeconfigPath, "deleted")
+			}
+		}()
+	}
 
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -73,15 +91,18 @@ func execTemplate(tpl Template) error {
 		if *flagEnterMine && *flagEnterAny {
 			return fmt.Errorf("cannot set flags --enter-mine and --enter-any at the same time")
 		}
-
-		matchLabel := "app.kubernetes.io/managed-by"
-		matchValue := managedBy
-		if *flagEnterAny {
-			matchLabel = "app.kubernetes.io/name"
-			matchValue = "go-testpod"
+		if len(*flagImageOverride) > 0 {
+			return fmt.Errorf("cannot set flag --image when entering existing pod")
 		}
 
-		pods, err := kubectlGetPodNames(matchLabel, matchValue)
+		matchLabels := map[string]string{
+			"app.kubernetes.io/name": "go-testpod",
+		}
+		if *flagEnterMine {
+			matchLabels["app.kubernetes.io/managed-by"] = managedBy
+		}
+
+		pods, err := kubectlGetPodNames(matchLabels)
 		if err != nil {
 			return fmt.Errorf("list running pods: %w", err)
 		}
@@ -146,15 +167,29 @@ func execTemplate(tpl Template) error {
 	return nil
 }
 
-func kubectlGetPodNames(label, value string) ([]string, error) {
-	cmd := exec.Command("kubectl", "get", "pods", "-l", label+"="+value, "--no-headers", "-o", "custom-columns=:metadata.name")
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, "KUBECONFIG="+tempKubeconfigPath)
-	out, err := cmd.CombinedOutput()
-	fmt.Println(strings.TrimSpace(string(out)))
+func kubectlListPods(matchLabels map[string]string) error {
+	args := []string{"get", "pods", "-L", "app.kubernetes.io/managed-by"}
+	for k, v := range matchLabels {
+		args = append(args, "-l", k+"="+v)
+	}
+	return kubectl(options{
+		Args: args,
+	})
+}
+
+func kubectlGetPodNames(matchLabels map[string]string) ([]string, error) {
+	args := []string{"get", "pods", "--no-headers", "-o", "custom-columns=:metadata.name"}
+	for k, v := range matchLabels {
+		args = append(args, "-l", k+"="+v)
+	}
+	out, err := kubectlGetOutput(options{
+		Args:   args,
+		Silent: true,
+	})
 	if err != nil {
 		return nil, err
 	}
+
 	podNames := make([]string, 0)
 	for _, part := range strings.Split(string(out), "\n") {
 		part = strings.TrimSpace(part)
@@ -166,48 +201,71 @@ func kubectlGetPodNames(label, value string) ([]string, error) {
 }
 
 func kubectlApply(manifestData string) error {
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, "KUBECONFIG="+tempKubeconfigPath)
-	cmd.Stdin = strings.NewReader(manifestData)
-	out, err := cmd.CombinedOutput()
-	fmt.Println(strings.TrimSpace(string(out)))
-	return err
+	return kubectl(options{
+		Args:  []string{"apply", "-f", "-"},
+		StdIn: manifestData,
+	})
 }
 
 func kubectlWaitForPod(podName string) error {
-	cmd := exec.Command("kubectl", "wait", "--for=condition=ready", "--timeout=30s", "pod/"+podName)
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, "KUBECONFIG="+tempKubeconfigPath)
-	out, err := cmd.CombinedOutput()
-	fmt.Println(strings.TrimSpace(string(out)))
-	return err
+	return kubectl(options{
+		Args: []string{"wait", "--for=condition=ready", "--timeout=30s", "pod/" + podName},
+	})
 }
 
 func kubectlExec(podName string, shell string) error {
-	cmd := exec.Command("kubectl", "exec", "-it", podName, "--", shell)
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, "KUBECONFIG="+tempKubeconfigPath)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return kubectl(options{
+		Args:    []string{"exec", "-it", podName, "--", shell},
+		PipeAll: true,
+	})
 }
 
 func kubectlDeletePod(podName string) error {
-	cmd := exec.Command("kubectl", "delete", "--wait=false", "pod", podName)
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, "KUBECONFIG="+tempKubeconfigPath)
-	out, err := cmd.CombinedOutput()
-	fmt.Println(strings.TrimSpace(string(out)))
-	return err
+	return kubectl(options{
+		Args: []string{"delete", "--wait=false", "pod", podName},
+	})
 }
 
 func kubectlDeleteNetworkPolicy(name string) error {
-	cmd := exec.Command("kubectl", "delete", "--wait=false", "netpol", name)
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, "KUBECONFIG="+tempKubeconfigPath)
-	out, err := cmd.CombinedOutput()
-	fmt.Println(strings.TrimSpace(string(out)))
+	return kubectl(options{
+		Args: []string{"delete", "--wait=false", "netpol", name},
+	})
+}
+
+type options struct {
+	Args    []string
+	PipeAll bool
+	Silent  bool
+	StdIn   string
+}
+
+func kubectl(options options) error {
+	_, err := kubectlGetOutput(options)
 	return err
+}
+
+func kubectlGetOutput(options options) (string, error) {
+	if options.PipeAll && len(options.StdIn) > 0 {
+		return "", fmt.Errorf("cannot set PipeAll and StdIn at the same time")
+	}
+
+	cmd := exec.Command("kubectl", options.Args...)
+	if len(tempKubeconfigPath) > 0 {
+		cmd.Env = os.Environ()
+		cmd.Env = append(cmd.Env, "KUBECONFIG="+tempKubeconfigPath)
+	}
+	if options.PipeAll {
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return "", cmd.Run()
+	}
+	if len(options.StdIn) > 0 {
+		cmd.Stdin = strings.NewReader(options.StdIn)
+	}
+	out, err := cmd.CombinedOutput()
+	if !options.Silent {
+		fmt.Println(strings.TrimSpace(string(out)))
+	}
+	return string(out), err
 }
