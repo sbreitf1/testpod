@@ -50,14 +50,15 @@ type PortBlock struct {
 	EndPort  int    `yaml:"endPort"`
 }
 
-func MakeManifestFromTemplate(name string, tpl Template) (string, error) {
+func MakeManifestFromTemplate(managedBy, name string, tpl Template) (string, error) {
 	if len(name) == 0 {
 		return "", fmt.Errorf("name cannot be empty")
 	}
 
 	matchLabels := map[string]string{
-		"app.kubernetes.io/name":     "go-testpod",
-		"app.kubernetes.io/instance": name,
+		"app.kubernetes.io/name":       "go-testpod",
+		"app.kubernetes.io/instance":   name,
+		"app.kubernetes.io/managed-by": managedBy,
 	}
 
 	var podManifest PodManifest

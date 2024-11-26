@@ -20,4 +20,6 @@ Edit the configuration file to set default image and shell to execute, as well a
 | ---- | ----------- |
 | `--image` | Overrides the default image from your template. |
 | `--shell` | Overrides the default shell from your template. |
+| `--enter-mine` | Enters an existing testpod managed by you. |
+| `--enter-any` | Enters an existing testpod managed by anyone. |
 | `--dry-run` | Prints the rendered manifests instead of applying them to Kubernetes. |

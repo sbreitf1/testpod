@@ -12,6 +12,8 @@ import (
 var (
 	flagImageOverride = flag.String("image", "", "set to override default image from template")
 	flagShellOverride = flag.String("shell", "", "set to override default shell from template")
+	flagEnterMine     = flag.Bool("enter-mine", false, "open another shell in existing testpod managed by you")
+	flagEnterAny      = flag.Bool("enter-any", false, "open another shell in existing testpod managed by anyone")
 	flagDryRun        = flag.Bool("dry-run", false, "print manifest instead of applying it to kubernetes")
 
 	tempKubeconfigPath string
@@ -24,6 +26,12 @@ func main() {
 	if err != nil {
 		fmt.Println("ERR: read template:", err)
 		os.Exit(1)
+	}
+	if len(*flagImageOverride) > 0 {
+		tpl.DefaultImage = *flagImageOverride
+	}
+	if len(*flagShellOverride) > 0 {
+		tpl.DefaultShell = *flagShellOverride
 	}
 
 	if err := execTemplate(tpl); err != nil {
@@ -59,16 +67,46 @@ func execTemplate(tpl Template) error {
 	if err != nil {
 		return fmt.Errorf("get hostname: %w", err)
 	}
+	managedBy := hostname
+
+	if *flagEnterMine || *flagEnterAny {
+		if *flagEnterMine && *flagEnterAny {
+			return fmt.Errorf("cannot set flags --enter-mine and --enter-any at the same time")
+		}
+
+		matchLabel := "app.kubernetes.io/managed-by"
+		matchValue := managedBy
+		if *flagEnterAny {
+			matchLabel = "app.kubernetes.io/name"
+			matchValue = "go-testpod"
+		}
+
+		pods, err := kubectlGetPodNames(matchLabel, matchValue)
+		if err != nil {
+			return fmt.Errorf("list running pods: %w", err)
+		}
+		if len(pods) == 0 {
+			return fmt.Errorf("no suitable testpods running in selected context")
+		}
+		if len(pods) > 1 {
+			return fmt.Errorf("multiple suitable testpods running in selected context")
+		}
+
+		if *flagDryRun {
+			fmt.Println("dry-run: skip entering pod", pods[0])
+			return nil
+		}
+
+		fmt.Println("enter running pod", pods[0])
+		if err := kubectlExec(pods[0], tpl.DefaultShell); err != nil {
+			return fmt.Errorf("exec into Pod: %w", err)
+		}
+		return nil
+	}
+
 	podName := "testpod-" + hostname + "-" + time.Now().Format("20060102-150405")
 
-	if len(*flagImageOverride) > 0 {
-		tpl.DefaultImage = *flagImageOverride
-	}
-	if len(*flagShellOverride) > 0 {
-		tpl.DefaultShell = *flagShellOverride
-	}
-
-	manifestData, err := MakeManifestFromTemplate(podName, tpl)
+	manifestData, err := MakeManifestFromTemplate(managedBy, podName, tpl)
 	if err != nil {
 		return fmt.Errorf("render manifest: %w", err)
 	}
@@ -106,6 +144,25 @@ func execTemplate(tpl Template) error {
 	}
 
 	return nil
+}
+
+func kubectlGetPodNames(label, value string) ([]string, error) {
+	cmd := exec.Command("kubectl", "get", "pods", "-l", label+"="+value, "--no-headers", "-o", "custom-columns=:metadata.name")
+	cmd.Env = os.Environ()
+	cmd.Env = append(cmd.Env, "KUBECONFIG="+tempKubeconfigPath)
+	out, err := cmd.CombinedOutput()
+	fmt.Println(strings.TrimSpace(string(out)))
+	if err != nil {
+		return nil, err
+	}
+	podNames := make([]string, 0)
+	for _, part := range strings.Split(string(out), "\n") {
+		part = strings.TrimSpace(part)
+		if len(part) > 0 {
+			podNames = append(podNames, part)
+		}
+	}
+	return podNames, nil
 }
 
 func kubectlApply(manifestData string) error {
