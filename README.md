@@ -10,7 +10,7 @@ go install github.com/sbreitf1/testpod@latest
 
 ## Usage
 
-First run will create a default configuration in `~/.config/testpod` (XDG compatible). Execute `testpod run --dry-run` to only create a default configuration file without applying it to Kubernetes.
+First run will create a default configuration in `~/.config/testpod` (XDG compatible). Execute `testpod --dry-run` to only create a default configuration file without applying it to Kubernetes.
 
 Edit the configuration file to set default image and shell to execute, as well as additional labels to apply to your Pod and configure a NetworkPolicy.
 
@@ -22,18 +22,19 @@ testpod list
 
 Shows a list of running testpods in the currently selected context. No specialized flags are available for this command.
 
-### run
+### run (Default)
 
 ```
 testpod run
 ```
 
-Runs a new testpod in the currently selected context and enters a tty. The following flags are available:
+Runs a new testpod in the currently selected context and enters a tty. This command is executed when no command is given. The following flags are available:
 
 | Flag | Description |
 | ---- | ----------- |
 | `--image` | Overrides the default image from your template. |
 | `--shell` | Overrides the default shell from your template. |
+| `--label`, `-l` | Define additional pod labels like `foo=bar`. |
 | `--dry-run` | Prints the rendered manifests instead of applying them to Kubernetes. |
 | `--no-temp-kubeconfig` | Do not use temporary copy of kubeconfig file. |
 

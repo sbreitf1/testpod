@@ -15,11 +15,12 @@ var (
 		} `cmd:"list" help:"List all running testpods."`
 
 		Run struct {
-			OverrideImage    string `name:"image" help:"set to override default image from template"`
-			OverrideShell    string `name:"shell" help:"set to override default shell from template"`
-			DryRun           bool   `name:"dry-run" help:"print manifest instead of applying it to kubernetes"`
-			NoTempKubeConfig bool   `name:"no-temp-kubeconfig" help:"do not use temporary copy of kubeconfig file"`
-		} `cmd:"run" help:"Run a new testpod. Default command if none is specified."`
+			OverrideImage    string   `name:"image" help:"set to override default image from template"`
+			OverrideShell    string   `name:"shell" help:"set to override default shell from template"`
+			Labels           []string `name:"label" short:"l" help:"set additional pod labels in a format like key=value"`
+			DryRun           bool     `name:"dry-run" help:"print manifest instead of applying it to kubernetes"`
+			NoTempKubeConfig bool     `name:"no-temp-kubeconfig" help:"do not use temporary copy of kubeconfig file"`
+		} `cmd:"run" default:"withargs" help:"Run a new testpod. Default command if none is specified."`
 
 		Enter struct {
 			OverrideShell    string `name:"shell" help:"set to override default shell from template"`
@@ -28,21 +29,11 @@ var (
 			NoTempKubeConfig bool   `name:"no-temp-kubeconfig" help:"do not use temporary copy of kubeconfig file"`
 		} `cmd:"enter" help:"Enter another shell on a running testpod."`
 	}
-
-	tempKubeconfigPath string
 )
 
 func main() {
-	var cmd string
-	if len(os.Args) > 1 {
-		ctx := kong.Parse(&cli)
-		cmd = ctx.Command()
-	} else {
-		// no args? just run a testpod
-		cmd = "run"
-	}
-
-	if err := execCmd(cmd); err != nil {
+	ctx := kong.Parse(&cli)
+	if err := execCmd(ctx.Command()); err != nil {
 		fmt.Println("ERR:", err)
 		os.Exit(1)
 	}
@@ -73,9 +64,22 @@ func execCmdList() error {
 
 func execCmdRun() error {
 	return withKubeConfig(cli.Run.NoTempKubeConfig, func() error {
+		additionalPodLabels := make(map[string]string)
+		for _, str := range cli.Run.Labels {
+			parts := strings.SplitN(str, "=", 2)
+			if len(parts) != 2 {
+				return fmt.Errorf("label must be like \"foo=bar\", got %q instead", str)
+			}
+			if _, ok := additionalPodLabels[parts[0]]; ok {
+				return fmt.Errorf("label %q is defined multiple times", parts[0])
+			}
+			additionalPodLabels[parts[0]] = parts[1]
+		}
+
 		tpl, err := ReadTemplateWithOverrides(TemplateOverrides{
-			Image: cli.Run.OverrideImage,
-			Shell: cli.Run.OverrideShell,
+			Image:               cli.Run.OverrideImage,
+			Shell:               cli.Run.OverrideShell,
+			AdditionalPodLabels: additionalPodLabels,
 		})
 		if err != nil {
 			return fmt.Errorf("read template: %w", err)

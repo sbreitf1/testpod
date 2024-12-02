@@ -75,8 +75,9 @@ func ReadTemplate() (Template, error) {
 }
 
 type TemplateOverrides struct {
-	Image string
-	Shell string
+	Image               string
+	Shell               string
+	AdditionalPodLabels map[string]string
 }
 
 func ReadTemplateWithOverrides(overrides TemplateOverrides) (Template, error) {
@@ -90,6 +91,11 @@ func ReadTemplateWithOverrides(overrides TemplateOverrides) (Template, error) {
 	}
 	if len(overrides.Shell) > 0 {
 		tpl.DefaultShell = overrides.Shell
+	}
+	if len(overrides.AdditionalPodLabels) > 0 {
+		for k, v := range overrides.AdditionalPodLabels {
+			tpl.Pod.AdditionalLabels[k] = v
+		}
 	}
 
 	return tpl, nil

@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+var (
+	tempKubeconfigPath string
+)
+
 func withKubeConfig(noTempKubeConfig bool, f func() error) error {
 	if !noTempKubeConfig {
 		realKubeconfigPath := os.Getenv("KUBECONFIG")
