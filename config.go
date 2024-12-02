@@ -73,3 +73,24 @@ func ReadTemplate() (Template, error) {
 
 	return tpl, nil
 }
+
+type TemplateOverrides struct {
+	Image string
+	Shell string
+}
+
+func ReadTemplateWithOverrides(overrides TemplateOverrides) (Template, error) {
+	tpl, err := ReadTemplate()
+	if err != nil {
+		return Template{}, err
+	}
+
+	if len(overrides.Image) > 0 {
+		tpl.DefaultImage = overrides.Image
+	}
+	if len(overrides.Shell) > 0 {
+		tpl.DefaultShell = overrides.Shell
+	}
+
+	return tpl, nil
+}
