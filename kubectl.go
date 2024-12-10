@@ -15,12 +15,16 @@ var (
 func withKubeConfig(noTempKubeConfig bool, f func() error) error {
 	if !noTempKubeConfig {
 		realKubeconfigPath := os.Getenv("KUBECONFIG")
-		if len(realKubeconfigPath) == 0 {
+		if !fileExists(realKubeconfigPath) {
 			userHomeDir, err := os.UserHomeDir()
 			if err != nil {
 				return fmt.Errorf("get user home dir: %w", err)
 			}
 			realKubeconfigPath = filepath.Join(userHomeDir, ".kube", "config")
+
+			if !fileExists(realKubeconfigPath) {
+				return fmt.Errorf("no local kubeconfig file found. try using the --no-temp-kubeconfig flag")
+			}
 		}
 
 		tmpFile, err := os.CreateTemp(os.TempDir(), "testpod-kubeconfig-*.yaml")
@@ -47,6 +51,14 @@ func withKubeConfig(noTempKubeConfig bool, f func() error) error {
 	}
 
 	return f()
+}
+
+func fileExists(path string) bool {
+	if len(path) == 0 {
+		return false
+	}
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir()
 }
 
 func kubectlListPods(matchLabels map[string]string) error {
