@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -14,10 +15,19 @@ var (
 func withKubeConfig(noTempKubeConfig bool, f func() error) error {
 	if !noTempKubeConfig {
 		realKubeconfigPath := os.Getenv("KUBECONFIG")
+		if len(realKubeconfigPath) == 0 {
+			userHomeDir, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("get user home dir: %w", err)
+			}
+			realKubeconfigPath = filepath.Join(userHomeDir, ".kube", "config")
+		}
+
 		tmpFile, err := os.CreateTemp(os.TempDir(), "testpod-kubeconfig-*.yaml")
 		if err != nil {
 			return fmt.Errorf("create temp kubeconfig: %w", err)
 		}
+		tmpFile.Close()
 		tempKubeconfigPath = tmpFile.Name()
 		fmt.Println("clone kubeconfig", realKubeconfigPath, "to", tempKubeconfigPath)
 		data, err := os.ReadFile(realKubeconfigPath)
@@ -29,7 +39,7 @@ func withKubeConfig(noTempKubeConfig bool, f func() error) error {
 		}
 		defer func() {
 			if err := os.Remove(tempKubeconfigPath); err != nil {
-				fmt.Println("WARN: failed to delete temp kubeconfig file", tempKubeconfigPath)
+				fmt.Println("WARN: failed to delete temp kubeconfig file", tempKubeconfigPath+":", err)
 			} else {
 				fmt.Println("temp kubeconfig file", tempKubeconfigPath, "deleted")
 			}
