@@ -90,7 +90,7 @@ func execCmdRun() error {
 			return fmt.Errorf("get hostname: %w", err)
 		}
 		managedBy := hostname
-		podName := "testpod-" + hostname + "-" + time.Now().Format("20060102-150405")
+		podName := makePodName(hostname, time.Now())
 
 		manifestData, err := MakeManifestFromTemplate(managedBy, podName, tpl)
 		if err != nil {

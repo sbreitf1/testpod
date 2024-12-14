@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -100,4 +103,20 @@ func MakeManifestFromTemplate(managedBy, name string, tpl Template) (string, err
 	}
 
 	return fullYaml, nil
+}
+
+func makePodName(hostname string, now time.Time) string {
+	// return a name that complies with RFC 1123 and RFC 1035 rules
+	hostname = strings.ToLower(hostname)
+	pattern := regexp.MustCompile(`[^a-z0-9\-]+`)
+	hostname = pattern.ReplaceAllString(hostname, "")
+
+	prefix := "testpod-"
+	suffix := "-" + now.Format("20060102-150405")
+
+	if len(prefix)+len(hostname)+len(suffix) > 63 {
+		hostname = hostname[:63-len(prefix)-len(suffix)]
+	}
+
+	return prefix + hostname + suffix
 }
