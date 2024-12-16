@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/manifoldco/promptui"
 )
 
 var (
@@ -54,7 +53,7 @@ func execCmd(cmd string) error {
 		return execCmdRun()
 
 	case "enter":
-		return execEnter()
+		return execCmdEnter()
 
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
@@ -109,17 +108,20 @@ func execCmdRun() error {
 			if err != nil {
 				return fmt.Errorf("get node names: %w", err)
 			}
-			selectedNodeName, err := selectNodeName(nodes)
+			selectedNodeIndex, err := interactiveSelect(nodes, func(item Node) string {
+				return fmt.Sprintf("%s  (%s)  %s", item.Name, item.Version, FormatDuration(item.Age))
+			})
 			if err != nil {
 				return fmt.Errorf("interactive node selection failed: %w", err)
 			}
-			nodeName = selectedNodeName
+			nodeName = nodes[selectedNodeIndex].Name
 		}
 		var nodeLabels map[string]string
 		if len(nodeName) > 0 {
 			labels, err := kubectlGetNodeLabels(nodeName, map[string]bool{
-				"beta.kubernetes.io/arch": true,
-				"beta.kubernetes.io/os":   true,
+				"beta.kubernetes.io/arch":          true,
+				"beta.kubernetes.io/os":            true,
+				"beta.kubernetes.io/instance-type": true,
 			})
 			if err != nil {
 				return fmt.Errorf("get node labels for node %q: %w", nodeName, err)
@@ -170,34 +172,7 @@ func execCmdRun() error {
 	})
 }
 
-func selectNodeName(nodes []Node) (string, error) {
-	items := make([]string, len(nodes))
-	for i := range nodes {
-		var ageStr string
-		if nodes[i].Age > 24*time.Hour {
-			ageStr = fmt.Sprintf("%dd", int(nodes[i].Age.Hours()/24))
-		} else if nodes[i].Age >= time.Hour {
-			ageStr = fmt.Sprintf("%dh", int(nodes[i].Age.Hours()))
-		} else if nodes[i].Age >= time.Minute {
-			ageStr = fmt.Sprintf("%dm", int(nodes[i].Age.Minutes()))
-		} else {
-			ageStr = fmt.Sprintf("%ds", int(nodes[i].Age.Seconds()))
-		}
-		items[i] = fmt.Sprintf("%s  (%s)  %s", nodes[i].Name, nodes[i].Version, ageStr)
-	}
-	prompt := promptui.Select{
-		Label: "Select Node",
-		Items: items,
-		Size:  len(nodes),
-	}
-	i, _, err := prompt.Run()
-	if err != nil {
-		return "", err
-	}
-	return nodes[i].Name, nil
-}
-
-func execEnter() error {
+func execCmdEnter() error {
 	tpl, err := ReadTemplateWithOverrides(TemplateOverrides{
 		Shell: cli.Enter.OverrideShell,
 	})

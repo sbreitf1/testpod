@@ -74,39 +74,33 @@ func kubectlListPods(matchLabels map[string]string) error {
 }
 
 func kubectlGetPodNames(matchLabels map[string]string) ([]string, error) {
-	args := []string{"get", "pods", "--no-headers", "-o", "custom-columns=:metadata.name"}
+	var obj struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+
+	args := []string{"get", "pods", "-o", "json"}
 	for k, v := range matchLabels {
 		args = append(args, "-l", k+"="+v)
 	}
-	out, err := kubectlGetOutput(options{
-		Args:   args,
-		Silent: true,
-	})
-	if err != nil {
+	if err := kubectl(options{
+		Args:      args,
+		ParseJSON: &obj,
+	}); err != nil {
 		return nil, err
 	}
 
 	podNames := make([]string, 0)
-	for _, part := range strings.Split(string(out), "\n") {
-		part = strings.TrimSpace(part)
-		if len(part) > 0 {
-			podNames = append(podNames, part)
-		}
+	for _, item := range obj.Items {
+		podNames = append(podNames, item.Metadata.Name)
 	}
 	return podNames, nil
 }
 
 func kubectlGetWorkerNodes() ([]Node, error) {
-	// k get nodes -o custom-columns=:metadat.name,:spec.taints --no-headers
-	args := []string{"get", "nodes", "-o", "json"}
-	out, err := kubectlGetOutput(options{
-		Args:   args,
-		Silent: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	var obj struct {
 		Items []struct {
 			Metadata struct {
@@ -125,9 +119,15 @@ func kubectlGetWorkerNodes() ([]Node, error) {
 			} `json:"status"`
 		} `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(out), &obj); err != nil {
-		return nil, fmt.Errorf("unmarshal json: %w", err)
+
+	args := []string{"get", "nodes", "-o", "json"}
+	if err := kubectl(options{
+		Args:      args,
+		ParseJSON: &obj,
+	}); err != nil {
+		return nil, err
 	}
+
 	nodes := make([]Node, 0)
 	for _, node := range obj.Items {
 		isControlPlane := false
@@ -149,34 +149,24 @@ func kubectlGetWorkerNodes() ([]Node, error) {
 }
 
 func kubectlGetNodeLabels(nodeName string, ignoredLabels map[string]bool) (map[string]string, error) {
-	args := []string{"get", "node", nodeName, "--no-headers", "-o", "custom-columns=:metadata.labels"}
-	out, err := kubectlGetOutput(options{
-		Args:   args,
-		Silent: true,
-	})
-	if err != nil {
+	var obj struct {
+		Metadata struct {
+			Labels map[string]string `json:"labels"`
+		} `json:"metadata"`
+	}
+
+	args := []string{"get", "node", nodeName, "-o", "json"}
+	if err := kubectl(options{
+		Args:      args,
+		ParseJSON: &obj,
+	}); err != nil {
 		return nil, err
 	}
-	out = strings.TrimSpace(out)
 
-	if !strings.HasPrefix(out, "map[") {
-		return nil, fmt.Errorf("unexpected output %q from kubectl", out)
-	}
-	out = out[4:]
-	if !strings.HasSuffix(out, "]") {
-		return nil, fmt.Errorf("unexpected output %q from kubectl", out)
-	}
-	out = out[:len(out)-1]
-	parts := strings.Split(out, " ")
 	nodeLabels := make(map[string]string)
-	for _, p := range parts {
-		parts := strings.SplitN(strings.TrimSpace(p), ":", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("failed to parse node label from %q", p)
-		}
-		key := strings.TrimSpace(parts[0])
-		if !ignoredLabels[key] {
-			nodeLabels[key] = strings.TrimSpace(parts[1])
+	for k, v := range obj.Metadata.Labels {
+		if !ignoredLabels[k] {
+			nodeLabels[k] = v
 		}
 	}
 	return nodeLabels, nil
@@ -215,10 +205,11 @@ func kubectlDeleteNetworkPolicy(name string) error {
 }
 
 type options struct {
-	Args    []string
-	PipeAll bool
-	Silent  bool
-	StdIn   string
+	Args      []string
+	PipeAll   bool
+	Silent    bool
+	StdIn     string
+	ParseJSON interface{}
 }
 
 func kubectl(options options) error {
@@ -229,6 +220,9 @@ func kubectl(options options) error {
 func kubectlGetOutput(options options) (string, error) {
 	if options.PipeAll && len(options.StdIn) > 0 {
 		return "", fmt.Errorf("cannot set PipeAll and StdIn at the same time")
+	}
+	if options.PipeAll && options.ParseJSON != nil {
+		return "", fmt.Errorf("cannot set PipeAll and ParseJSON at the same time")
 	}
 
 	cmd := exec.Command("kubectl", options.Args...)
@@ -246,8 +240,15 @@ func kubectlGetOutput(options options) (string, error) {
 		cmd.Stdin = strings.NewReader(options.StdIn)
 	}
 	out, err := cmd.CombinedOutput()
-	if !options.Silent {
-		fmt.Println(strings.TrimSpace(string(out)))
+	if options.ParseJSON != nil {
+		if err := json.Unmarshal(out, options.ParseJSON); err != nil {
+			return "", fmt.Errorf("parse json: %w", err)
+		}
+
+	} else {
+		if !options.Silent {
+			fmt.Println(strings.TrimSpace(string(out)))
+		}
 	}
 	return string(out), err
 }
