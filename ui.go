@@ -7,7 +7,7 @@ import (
 	"github.com/manifoldco/promptui"
 )
 
-func interactiveSelect[T any](items []T, formatter func(item T) string) (int, error) {
+func InteractiveSelect[T any](items []T, formatter func(item T) string) (int, error) {
 	strItem := make([]string, len(items))
 	for i := range items {
 		strItem[i] = formatter(items[i])

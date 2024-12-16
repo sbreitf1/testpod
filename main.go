@@ -108,7 +108,7 @@ func execCmdRun() error {
 			if err != nil {
 				return fmt.Errorf("get node names: %w", err)
 			}
-			selectedNodeIndex, err := interactiveSelect(nodes, func(item Node) string {
+			selectedNodeIndex, err := InteractiveSelect(nodes, func(item Node) string {
 				return fmt.Sprintf("%s  (%s)  %s", item.Name, item.Version, FormatDuration(item.Age))
 			})
 			if err != nil {
