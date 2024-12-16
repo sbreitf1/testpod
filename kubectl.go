@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var (
@@ -92,6 +94,92 @@ func kubectlGetPodNames(matchLabels map[string]string) ([]string, error) {
 		}
 	}
 	return podNames, nil
+}
+
+func kubectlGetWorkerNodes() ([]Node, error) {
+	// k get nodes -o custom-columns=:metadat.name,:spec.taints --no-headers
+	args := []string{"get", "nodes", "-o", "json"}
+	out, err := kubectlGetOutput(options{
+		Args:   args,
+		Silent: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var obj struct {
+		Items []struct {
+			Metadata struct {
+				Name              string    `json:"name"`
+				CreationTimestamp time.Time `json:"creationTimestamp"`
+			} `json:"metadata"`
+			Spec struct {
+				Taints []struct {
+					Key string `json:"key"`
+				} `json:"taints"`
+			} `json:"spec"`
+			Status struct {
+				NodeInfo struct {
+					KubeletVersion string `json:"kubeletVersion"`
+				} `json:"nodeInfo"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		return nil, fmt.Errorf("unmarshal json: %w", err)
+	}
+	nodes := make([]Node, 0)
+	for _, node := range obj.Items {
+		isControlPlane := false
+		for _, t := range node.Spec.Taints {
+			if t.Key == "node-role.kubernetes.io/control-plane" {
+				isControlPlane = true
+				break
+			}
+		}
+		if !isControlPlane {
+			nodes = append(nodes, Node{
+				Name:    node.Metadata.Name,
+				Age:     time.Since(node.Metadata.CreationTimestamp),
+				Version: node.Status.NodeInfo.KubeletVersion,
+			})
+		}
+	}
+	return nodes, nil
+}
+
+func kubectlGetNodeLabels(nodeName string, ignoredLabels map[string]bool) (map[string]string, error) {
+	args := []string{"get", "node", nodeName, "--no-headers", "-o", "custom-columns=:metadata.labels"}
+	out, err := kubectlGetOutput(options{
+		Args:   args,
+		Silent: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out = strings.TrimSpace(out)
+
+	if !strings.HasPrefix(out, "map[") {
+		return nil, fmt.Errorf("unexpected output %q from kubectl", out)
+	}
+	out = out[4:]
+	if !strings.HasSuffix(out, "]") {
+		return nil, fmt.Errorf("unexpected output %q from kubectl", out)
+	}
+	out = out[:len(out)-1]
+	parts := strings.Split(out, " ")
+	nodeLabels := make(map[string]string)
+	for _, p := range parts {
+		parts := strings.SplitN(strings.TrimSpace(p), ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("failed to parse node label from %q", p)
+		}
+		key := strings.TrimSpace(parts[0])
+		if !ignoredLabels[key] {
+			nodeLabels[key] = strings.TrimSpace(parts[1])
+		}
+	}
+	return nodeLabels, nil
 }
 
 func kubectlApply(manifestData string) error {

@@ -14,6 +14,7 @@ type PodManifest struct {
 	Kind       string        `yaml:"kind"`
 	Metadata   MetadataBlock `yaml:"metadata"`
 	Spec       struct {
+		Affinity                      *AffinityBlock   `yaml:"affinity,omitempty"`
 		TerminationGracePeriodSeconds int              `yaml:"terminationGracePeriodSeconds"`
 		Containers                    []ContainerBlock `yaml:"containers"`
 	} `yaml:"spec"`
@@ -22,6 +23,24 @@ type PodManifest struct {
 type MetadataBlock struct {
 	Name   string            `yaml:"name"`
 	Labels map[string]string `yaml:"labels,omitempty"`
+}
+
+type AffinityBlock struct {
+	NodeAffinity struct {
+		RequiredDuringSchedulingIgnoredDuringExecution struct {
+			NodeSelectorTerms []NodeSelectorTermBlock `yaml:"nodeSelectorTerms"`
+		} `yaml:"requiredDuringSchedulingIgnoredDuringExecution"`
+	} `yaml:"nodeAffinity"`
+}
+
+type NodeSelectorTermBlock struct {
+	MatchExpressions []MatchExpressionsBlock `yaml:"matchExpressions"`
+}
+
+type MatchExpressionsBlock struct {
+	Key      string
+	Operator string
+	Values   []string
 }
 
 type ContainerBlock struct {
@@ -53,7 +72,13 @@ type PortBlock struct {
 	EndPort  int    `yaml:"endPort"`
 }
 
-func MakeManifestFromTemplate(managedBy, name string, tpl Template) (string, error) {
+type Node struct {
+	Name    string
+	Age     time.Duration
+	Version string
+}
+
+func MakeManifestFromTemplate(managedBy, name string, nodeLabels map[string]string, tpl Template) (string, error) {
 	if len(name) == 0 {
 		return "", fmt.Errorf("name cannot be empty")
 	}
@@ -78,6 +103,20 @@ func MakeManifestFromTemplate(managedBy, name string, tpl Template) (string, err
 	podManifest.Spec.TerminationGracePeriodSeconds = 1
 	podManifest.Spec.Containers = []ContainerBlock{
 		{Name: "main", Image: tpl.DefaultImage, Command: tpl.Pod.Command, Args: tpl.Pod.Args},
+	}
+	if len(nodeLabels) > 0 {
+		selectors := make([]MatchExpressionsBlock, 0, len(nodeLabels))
+		for k, v := range nodeLabels {
+			selectors = append(selectors, MatchExpressionsBlock{
+				Key:      k,
+				Operator: "In",
+				Values:   []string{v},
+			})
+		}
+		podManifest.Spec.Affinity = &AffinityBlock{}
+		podManifest.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = []NodeSelectorTermBlock{
+			{MatchExpressions: selectors},
+		}
 	}
 	podYaml, err := yaml.Marshal(&podManifest)
 	if err != nil {

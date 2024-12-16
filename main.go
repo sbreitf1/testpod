@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/manifoldco/promptui"
 )
 
 var (
@@ -18,6 +19,8 @@ var (
 			OverrideImage    string   `name:"image" help:"set to override default image from template"`
 			OverrideShell    string   `name:"shell" help:"set to override default shell from template"`
 			Labels           []string `name:"label" short:"l" help:"set additional pod labels in a format like key=value"`
+			Node             string   `name:"node" help:"specify node name on which to run the pod"`
+			SelectNode       bool     `name:"select-node" help:"select node interactively"`
 			DryRun           bool     `name:"dry-run" help:"print manifest instead of applying it to kubernetes"`
 			NoTempKubeConfig bool     `name:"no-temp-kubeconfig" help:"do not use temporary copy of kubeconfig file"`
 		} `cmd:"run" default:"withargs" help:"Run a new testpod. Default command if none is specified."`
@@ -32,6 +35,9 @@ var (
 )
 
 func main() {
+	//TODO cleanup on ctrl+c
+	// https://stackoverflow.com/questions/11268943/is-it-possible-to-capture-a-ctrlc-signal-sigint-and-run-a-cleanup-function-i
+
 	ctx := kong.Parse(&cli)
 	if err := execCmd(ctx.Command()); err != nil {
 		fmt.Println("ERR:", err)
@@ -92,7 +98,38 @@ func execCmdRun() error {
 		managedBy := hostname
 		podName := makePodName(hostname, time.Now())
 
-		manifestData, err := MakeManifestFromTemplate(managedBy, podName, tpl)
+		var nodeName string
+		if len(cli.Run.Node) > 0 {
+			if cli.Run.SelectNode {
+				return fmt.Errorf("cannot specify --node and --select-node at the same time")
+			}
+			nodeName = cli.Run.Node
+		} else if cli.Run.SelectNode {
+			nodes, err := kubectlGetWorkerNodes()
+			if err != nil {
+				return fmt.Errorf("get node names: %w", err)
+			}
+			selectedNodeName, err := selectNodeName(nodes)
+			if err != nil {
+				return fmt.Errorf("interactive node selection failed: %w", err)
+			}
+			nodeName = selectedNodeName
+		}
+		var nodeLabels map[string]string
+		if len(nodeName) > 0 {
+			labels, err := kubectlGetNodeLabels(nodeName, map[string]bool{
+				"beta.kubernetes.io/arch": true,
+				"beta.kubernetes.io/os":   true,
+			})
+			if err != nil {
+				return fmt.Errorf("get node labels for node %q: %w", nodeName, err)
+			}
+			nodeLabels = labels
+
+			//TODO check set of labels is unique
+		}
+
+		manifestData, err := MakeManifestFromTemplate(managedBy, podName, nodeLabels, tpl)
 		if err != nil {
 			return fmt.Errorf("render manifest: %w", err)
 		}
@@ -131,6 +168,33 @@ func execCmdRun() error {
 
 		return nil
 	})
+}
+
+func selectNodeName(nodes []Node) (string, error) {
+	items := make([]string, len(nodes))
+	for i := range nodes {
+		var ageStr string
+		if nodes[i].Age > 24*time.Hour {
+			ageStr = fmt.Sprintf("%dd", int(nodes[i].Age.Hours()/24))
+		} else if nodes[i].Age >= time.Hour {
+			ageStr = fmt.Sprintf("%dh", int(nodes[i].Age.Hours()))
+		} else if nodes[i].Age >= time.Minute {
+			ageStr = fmt.Sprintf("%dm", int(nodes[i].Age.Minutes()))
+		} else {
+			ageStr = fmt.Sprintf("%ds", int(nodes[i].Age.Seconds()))
+		}
+		items[i] = fmt.Sprintf("%s  (%s)  %s", nodes[i].Name, nodes[i].Version, ageStr)
+	}
+	prompt := promptui.Select{
+		Label: "Select Node",
+		Items: items,
+		Size:  len(nodes),
+	}
+	i, _, err := prompt.Run()
+	if err != nil {
+		return "", err
+	}
+	return nodes[i].Name, nil
 }
 
 func execEnter() error {

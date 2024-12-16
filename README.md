@@ -35,6 +35,8 @@ Runs a new testpod in the currently selected context and enters a tty. This comm
 | `--image` | Overrides the default image from your template. |
 | `--shell` | Overrides the default shell from your template. |
 | `--label`, `-l` | Define additional pod labels like `foo=bar`. |
+| `--node` | Define node name to schedule the pod. |
+| `--select-node` | Show interactive node selection for pod scheduling. |
 | `--dry-run` | Prints the rendered manifests instead of applying them to Kubernetes. |
 | `--no-temp-kubeconfig` | Do not use temporary copy of kubeconfig file. |
 
